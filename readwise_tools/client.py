@@ -13,6 +13,7 @@ documents the intent: code may *name* the path, but the token VALUE stays out of
 from __future__ import annotations
 
 import html
+import json
 import os
 import re
 import time
@@ -24,6 +25,12 @@ API_BASE = "https://readwise.io/api/v3"
 
 # Assembled from parts (see module docstring): ~/.config/readwise-tools/token
 _DEFAULT_TOKEN_PATH = Path.home() / ".config" / "readwise-tools" / "token"
+
+# Reader ids are short url-safe strings; validate before they ever touch a URL path.
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+# Proactive throttle per endpoint family: LIST 20/min -> 3.1s, UPDATE 50/min -> 1.3s.
+_MIN_INTERVAL = {"list": 3.1, "update": 1.3}
 
 
 def resolve_token() -> str:
@@ -41,38 +48,66 @@ def resolve_token() -> str:
     )
 
 
+def valid_id(doc_id: str) -> str:
+    """Return doc_id unchanged if it is a safe Reader id, else exit cleanly."""
+    if not _ID_RE.match(doc_id or ""):
+        raise SystemExit(f"Invalid document id: {doc_id!r}")
+    return doc_id
+
+
+def emit(obj) -> None:
+    """Print an object to stdout as pretty UTF-8 JSON."""
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
+
+
 class ReaderClient:
     """Minimal client for the Reader endpoints used by the CLIs."""
 
-    LIST_MIN_INTERVAL = 3.1   # seconds between LIST calls (~20/min limit)
     MAX_RETRIES = 5
+    MAX_BACKOFF = 60.0  # cap any Retry-After sleep
 
     def __init__(self, token: str | None = None, session: requests.Session | None = None):
         self._token = token or resolve_token()
         self.s = session or requests.Session()
         self.s.headers.update({"Authorization": f"Token {self._token}"})
-        self._last_list = 0.0
+        self._last: dict[str, float] = {}
 
-    def _request(self, method: str, path: str, **kw) -> requests.Response:
+    def _throttle(self, kind: str) -> None:
+        interval = _MIN_INTERVAL.get(kind, 0.0)
+        dt = time.monotonic() - self._last.get(kind, 0.0)
+        if dt < interval:
+            time.sleep(interval - dt)
+        self._last[kind] = time.monotonic()
+
+    @classmethod
+    def _retry_after(cls, r: requests.Response) -> float:
+        """Seconds to wait on a 429 — tolerant of a non-numeric header, capped."""
+        try:
+            wait = float(r.headers.get("Retry-After", "5"))
+        except ValueError:
+            wait = 5.0  # Retry-After may be an HTTP-date; back off a fixed amount
+        return min(wait + 0.5, cls.MAX_BACKOFF)
+
+    def _call(self, method: str, path: str, kind: str, **kw) -> dict:
+        """Request and return parsed JSON. Any failure becomes a clean SystemExit."""
         url = f"{API_BASE}{path}"
-        for _ in range(self.MAX_RETRIES):
-            r = self.s.request(method, url, timeout=60, **kw)
-            if r.status_code == 429:
-                wait = float(r.headers.get("Retry-After", "5"))
-                time.sleep(wait + 0.5)
-                continue
-            r.raise_for_status()
-            return r
-        r.raise_for_status()
-        return r
+        try:
+            for _ in range(self.MAX_RETRIES):
+                self._throttle(kind)
+                r = self.s.request(method, url, timeout=60, **kw)
+                if r.status_code == 429:
+                    time.sleep(self._retry_after(r))
+                    continue
+                r.raise_for_status()
+                return r.json() if r.content else {}
+            r.raise_for_status()  # retries exhausted on 429 -> surface it
+            return {}
+        except requests.exceptions.JSONDecodeError:
+            raise SystemExit("Readwise API returned a non-JSON response.")
+        except requests.RequestException as e:
+            raise SystemExit(f"Readwise API error: {e}")
 
-    def _throttle_list(self) -> None:
-        dt = time.monotonic() - self._last_list
-        if dt < self.LIST_MIN_INTERVAL:
-            time.sleep(self.LIST_MIN_INTERVAL - dt)
-        self._last_list = time.monotonic()
-
-    def list(
+    def fetch(
         self,
         location: str | None = None,
         category: str | None = None,
@@ -85,47 +120,43 @@ class ReaderClient:
         """Return documents, paginating through every page.
 
         The Reader API has no server-side domain filter, so `domain` is applied
-        client-side against each document's source_url/url.
+        client-side on source_url/url. Note: with a sparse `domain` and a small
+        `limit`, this may still page the whole library before the limit is reached.
         """
-        base_params: dict[str, str] = {}
+        base: dict[str, str] = {}
         if location:
-            base_params["location"] = location
+            base["location"] = location
         if category:
-            base_params["category"] = category
+            base["category"] = category
         if updated_after:
-            base_params["updatedAfter"] = updated_after
+            base["updatedAfter"] = updated_after
         if doc_id:
-            base_params["id"] = doc_id
+            base["id"] = doc_id
         if with_html:
-            base_params["withHtmlContent"] = "true"
+            base["withHtmlContent"] = "true"
 
         out: list[dict] = []
         cursor: str | None = None
         while True:
-            params = dict(base_params)
-            if cursor:
-                params["pageCursor"] = cursor
-            self._throttle_list()
-            data = self._request("GET", "/list/", params=params).json()
+            params = dict(base, **({"pageCursor": cursor} if cursor else {}))
+            data = self._call("GET", "/list/", "list", params=params)
             for d in data.get("results", []):
-                if domain:
-                    haystack = (d.get("source_url") or "") + " " + (d.get("url") or "")
-                    if domain not in haystack:
-                        continue
+                if domain and domain not in ((d.get("source_url") or "") + " " + (d.get("url") or "")):
+                    continue
                 out.append(d)
                 if limit and len(out) >= limit:
                     return out
             cursor = data.get("nextPageCursor")
             if not cursor:
-                break
-        return out
+                return out
 
     def get(self, doc_id: str, with_html: bool = True) -> dict | None:
-        docs = self.list(doc_id=doc_id, with_html=with_html)
+        docs = self.fetch(doc_id=valid_id(doc_id), with_html=with_html)
         return docs[0] if docs else None
 
     def move(self, doc_id: str, location: str) -> dict:
-        return self._request("PATCH", f"/update/{doc_id}/", json={"location": location}).json()
+        return self._call("PATCH", f"/update/{valid_id(doc_id)}/", "update",
+                          json={"location": location})
 
 
 # --- transcript / html helpers -------------------------------------------------
