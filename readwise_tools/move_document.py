@@ -1,10 +1,9 @@
 """rw-move — move a document to another Reader location."""
-import json
 import sys
 
 from fastcore.script import call_parse
 
-from readwise_tools.client import ReaderClient
+from readwise_tools.client import ReaderClient, emit
 
 VALID_LOCATIONS = {"new", "later", "archive", "feed"}
 
@@ -16,12 +15,8 @@ def main(
 ):
     "Move a document to a new location (PATCH /update/<id>/)."
     if location not in VALID_LOCATIONS:
-        print(json.dumps({"error": "invalid location", "location": location,
-                          "valid": sorted(VALID_LOCATIONS)}))
+        emit({"error": "invalid location", "location": location,
+              "valid": sorted(VALID_LOCATIONS)})
         sys.exit(2)
-    client = ReaderClient()
-    res = client.move(doc_id, location)
-    print(json.dumps(
-        {"id": doc_id, "location": res.get("location", location), "ok": True, "raw": res},
-        ensure_ascii=False, indent=2,
-    ))
+    res = ReaderClient().move(doc_id, location)
+    emit({"id": doc_id, "location": res.get("location", location), "ok": True, "raw": res})

@@ -1,9 +1,7 @@
 """rw-list — list Readwise Reader documents in a location, optionally filtered."""
-import json
-
 from fastcore.script import call_parse
 
-from readwise_tools.client import ReaderClient
+from readwise_tools.client import ReaderClient, emit
 
 DEFAULT_FIELDS = "id,title,author,category,source_url,url,site_name,word_count,created_at"
 
@@ -18,8 +16,7 @@ def main(
     fields: str = DEFAULT_FIELDS,   # comma-separated fields to emit; "all" for full docs
 ):
     "List Reader documents as a JSON array (id + metadata)."
-    client = ReaderClient()
-    docs = client.list(
+    docs = ReaderClient().fetch(
         location=location or None,
         category=category or None,
         updated_after=updated_after or None,
@@ -27,8 +24,7 @@ def main(
         limit=limit or None,
     )
     if fields.strip().lower() == "all":
-        slim = docs
+        emit(docs)
     else:
         keys = [f.strip() for f in fields.split(",") if f.strip()]
-        slim = [{k: d.get(k) for k in keys} for d in docs]
-    print(json.dumps(slim, ensure_ascii=False, indent=2))
+        emit([{k: d.get(k) for k in keys} for d in docs])
