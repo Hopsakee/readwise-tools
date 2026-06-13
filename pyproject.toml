@@ -13,6 +13,11 @@ dependencies = [
 rw-list = "readwise_tools.list_documents:main"
 rw-get = "readwise_tools.get_document:main"
 rw-move = "readwise_tools.move_document:main"
+rw-update = "readwise_tools.update_document:main"
+rw-prompt = "readwise_tools.prompt_sync:main"
+rw-rate = "readwise_tools.rate_document:main"
+rw-tag = "readwise_tools.tag_document:main"
+rw-rate-tag = "readwise_tools.rate_tag:main"
 
 [build-system]
 requires = ["hatchling"]

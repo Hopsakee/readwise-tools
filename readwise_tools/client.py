@@ -158,6 +158,52 @@ class ReaderClient:
         return self._call("PATCH", f"/update/{valid_id(doc_id)}/", "update",
                           json={"location": location})
 
+    def update(
+        self,
+        doc_id: str,
+        tags: list[str] | None = None,
+        notes: str | None = None,
+        location: str | None = None,
+    ) -> dict:
+        """PATCH /update/<id>/ sending ONLY the fields that were provided.
+
+        This is the general modify endpoint behind rw-update; `move` is the
+        location-only special case. A field left as None is omitted from the
+        body entirely, so callers can change tags without touching notes, etc.
+        Returns the parsed API response (empty dict if nothing to send).
+        """
+        body: dict = {}
+        if tags is not None:
+            body["tags"] = tags
+        if notes is not None:
+            body["notes"] = notes
+        if location is not None:
+            body["location"] = location
+        if not body:
+            return {}
+        return self._call("PATCH", f"/update/{valid_id(doc_id)}/", "update", json=body)
+
+
+def tag_names(doc: dict) -> list[str]:
+    """Normalise a Reader document's `tags` (dict-or-list) to a list of names.
+
+    Reader v3 returns per-document tags as an object keyed by tag name; older
+    shapes (and our own payloads) use a plain list. Handle both so callers can
+    inspect existing tags uniformly.
+    """
+    tags = doc.get("tags")
+    if isinstance(tags, dict):
+        return list(tags.keys())
+    if isinstance(tags, list):
+        out = []
+        for t in tags:
+            if isinstance(t, str):
+                out.append(t)
+            elif isinstance(t, dict) and t.get("name"):
+                out.append(t["name"])
+        return out
+    return []
+
 
 # --- transcript / html helpers -------------------------------------------------
 
