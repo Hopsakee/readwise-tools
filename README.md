@@ -79,6 +79,61 @@ uv run rw-move 01abc... archive   # e.g. inbox -> archive after archiving its tr
 
 Target location must be one of `new` / `later` / `archive` / `feed`.
 
+### `rw-update` — modify a document (tags / notes / location)
+
+```bash
+rw-update <id> --tags "python programming" --location later
+rw-update <id> --notes "my note"          # only the flags you pass are sent
+```
+
+Note: `--tags` **replaces** the document's tags (it does not merge). Flags use
+underscores (`--set_empty_notes`), matching the other tools.
+
+## Rate & tag pipeline (n8n "Rate and tag sources" rebuild)
+
+Three building-block CLIs plus an orchestrator resurrect the old n8n workflow as
+owned code. The LLM is reached only through `bun ~/.claude/PAI/TOOLS/Inference.ts`
+(`--level fast` = Haiku, the cheapest tier; one flag to swap models later), and
+prompts come from the locally-cloned `promptslibrarysync` repo.
+
+### `rw-prompt` — fetch a prompt from the prompts-sync-library
+
+```bash
+rw-prompt estimate-quality            # git pull, then print prompts-latest/estimate-quality.md (frontmatter stripped)
+rw-prompt add-topic-tags --no_pull    # read the cached copy, no pull
+```
+
+### `rw-rate` — rate a document's reading-ROI tier (S/A/B/C/D)
+
+```bash
+rw-rate --id <doc>                    # fetch + rate a Reader doc
+cat article.md | rw-rate --text_file -
+```
+Output: `{tier, model, quality}`. Uses the `estimate-quality` prompt.
+
+### `rw-tag` — topic tags from a fixed vocabulary
+
+```bash
+rw-tag --id <doc>                     # tags chosen ONLY from add-topic-tags' embedded vocabulary (dup-proof)
+```
+Output: a JSON array of tags.
+
+### `rw-rate-tag` — the nightly orchestrator
+
+```bash
+rw-rate-tag --dry_run --limit 2       # rate+tag, print the planned PATCH, write nothing
+rw-rate-tag --limit 10                # the scheduled behavior
+```
+
+For each `location=new` item, capped by `--limit`: skip if already `_rating`-tagged;
+`word_count > 10000` or empty → `PROCESS_MANUAL`; otherwise rate + tag, append
+`_rating/<TIER>/claude-haiku`, write a quality-summary markdown into notes, and move
+`new → later`. Then it feeds `consume-selection` (`cs-ingest` + `cs-groundtruth`).
+
+**Nightly:** a systemd-user timer (`readwise-rate-tag.timer`, 04:00) runs
+`~/.claude/scripts/run-readwise-rate-tag-nightly.sh`, which caps each run at **10 items**
+and scrubs `CLAUDECODE`/auth env so the nested `claude` uses subscription billing.
+
 ## API notes
 
 - LIST is rate-limited to 20/min, UPDATE to 50/min; the client throttles LIST calls and
