@@ -155,6 +155,13 @@ def main(
     if not dry_run and not no_feed and processed + manual > 0:
         feed_log = _feed_consume_selection(CONSUME_SELECTION_REPO)
 
+    # Root cause of the silent-feed outage: feed failures were only ERR log
+    # lines while `errors` (which the nightly wrapper alarms on) stayed 0, so a
+    # broken feed produced a clean-looking run. Roll feed failures into errors
+    # so the wrapper's ERRORS>0 alarm fires. (audit 2026-07-02)
+    feed_errors = sum(1 for line in feed_log if line.startswith("ERR"))
+    errors += feed_errors
+
     emit({
         "dry_run": dry_run,
         "seen": len(docs),
@@ -162,6 +169,7 @@ def main(
         "process_manual": manual,
         "skipped_already_rated": skipped,
         "errors": errors,
+        "feed_errors": feed_errors,
         "results": results,
         "consume_selection_feed": feed_log,
     })
