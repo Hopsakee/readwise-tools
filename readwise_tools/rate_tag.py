@@ -26,7 +26,10 @@ from readwise_tools.prompt_sync import load_prompt
 from readwise_tools.rate_document import rate_text
 from readwise_tools.tag_document import tag_text
 
-CONSUME_SELECTION_REPO = Path.home() / "Code" / "consume-selection"
+# Repo was renamed consume-selection -> l-space-librarian on 2026-07-02. The old
+# path no longer exists; `uv run --project <gone>` failed silently (ERR log line,
+# rate_tag still exit 0), so the nightly Readwise -> l-space.db feed had stopped.
+CONSUME_SELECTION_REPO = Path.home() / "Code" / "l-space-librarian"
 MAX_WORDS = 10000
 
 
