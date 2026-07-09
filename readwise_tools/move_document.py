@@ -1,4 +1,4 @@
-"""rw-move — move a document to another Reader location."""
+"""rwr-move — move a document to another Reader location."""
 import sys
 
 from fastcore.script import call_parse

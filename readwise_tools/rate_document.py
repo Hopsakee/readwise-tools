@@ -1,4 +1,4 @@
-"""rw-rate — rate a document's reading-ROI tier (S/A/B/C/D) by a given prompt.
+"""rwr-rate — rate a document's reading-ROI tier (S/A/B/C/D) by a given prompt.
 
 Sources the document text from a Reader id (--id, via the client) or from a
 file / stdin (--text-file), loads the quality prompt from the prompts-sync

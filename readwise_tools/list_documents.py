@@ -1,4 +1,4 @@
-"""rw-list — list Readwise Reader documents in a location, optionally filtered."""
+"""rwr-list — list Readwise Reader documents in a location, optionally filtered."""
 from fastcore.script import call_parse
 
 from readwise_tools.client import ReaderClient, emit

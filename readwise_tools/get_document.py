@@ -1,4 +1,4 @@
-"""rw-get — fetch one document's metadata plus transcript (html or plain text)."""
+"""rwr-get — fetch one document's metadata plus transcript (html or plain text)."""
 import sys
 
 from fastcore.script import call_parse

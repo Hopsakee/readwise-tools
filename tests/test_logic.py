@@ -1,8 +1,8 @@
 """Pure-logic tests — no network, no LLM. Run: uv run python tests/test_logic.py
 
-Covers the deterministic helpers behind rw-prompt / rw-tag / rw-rate /
-rw-rate-tag / rw-update. The live-inference paths (Inference.ts -> claude) are
-verified out-of-session (the cron / a normal shell), never here.
+Covers the deterministic helpers behind rw-prompt / rwr-tag / rwr-rate /
+rwr-rate-tag / rwr-update. The live-inference paths (Inference.ts -> claude)
+are verified out-of-session (the cron / a normal shell), never here.
 """
 from readwise_tools.client import ReaderClient, tag_names
 from readwise_tools.infer import extract_json
@@ -30,13 +30,13 @@ check("strip_frontmatter removes block",
 check("strip_frontmatter no-frontmatter unchanged",
       strip_frontmatter("just a body\nline2"), "just a body\nline2")
 
-# --- parse_tags (rw-tag) -----------------------------------------------------
+# --- parse_tags (rwr-tag) -----------------------------------------------------
 check("parse_tags lowercases topic, keeps BOM_",
       parse_tags("#Productivity #communication #BOM_Progress"),
       ["productivity", "communication", "BOM_Progress"])
 check("parse_tags empty", parse_tags("no hashes here"), [])
 
-# --- _parse_tags (rw-update) -------------------------------------------------
+# --- _parse_tags (rwr-update) -------------------------------------------------
 check("_parse_tags comma+space", _parse_tags("a, b  c,d"), ["a", "b", "c", "d"])
 
 # --- extract_json ------------------------------------------------------------
@@ -82,6 +82,43 @@ check("update method is PATCH", captured["method"], "PATCH")
 fc.update("abc123", notes="hi")
 check("update notes-only", captured["json"], {"notes": "hi"})
 check("update empty no-op returns {}", fc.update("abc123"), {})
+
+# --- save() body construction + path (H1: podcast-highlight-lane) -----------
+fc.save("https://open.spotify.com/episode/abc123")
+check("save path", captured.get("json"), {"url": "https://open.spotify.com/episode/abc123"})
+check("save method is POST", captured["method"], "POST")
+fc.save("https://x.example/y", tags=["podcast"], location="new")
+check("save with tags+location",
+      captured["json"],
+      {"url": "https://x.example/y", "tags": ["podcast"], "location": "new"})
+
+# --- fetch_rw_books() pagination + absolute-URL _call (H1) ------------------
+pages = [
+    {"results": [{"id": 1, "category": "podcasts"}], "next": "https://readwise.io/api/v2/books/?page=2"},
+    {"results": [{"id": 2, "category": "podcasts"}], "next": None},
+]
+
+
+class PagedFakeClient(ReaderClient):
+    def __init__(self):
+        self._calls = []
+
+    def _call(self, method, path, kind, **kw):
+        self._calls.append((method, path, kw.get("params")))
+        return pages[len(self._calls) - 1]
+
+
+pfc = PagedFakeClient()
+books = pfc.fetch_rw_books(category="podcasts")
+check("fetch_rw_books collects both pages", [b["id"] for b in books], [1, 2])
+check("fetch_rw_books first call hits /api/v2/books/", pfc._calls[0][1], "https://readwise.io/api/v2/books/")
+check("fetch_rw_books first call sends category param", pfc._calls[0][2], {"page_size": 100, "category": "podcasts"})
+check("fetch_rw_books follows `next` verbatim (no re-added params)",
+      (pfc._calls[1][1], pfc._calls[1][2]),
+      ("https://readwise.io/api/v2/books/?page=2", None))
+
+pfc2 = PagedFakeClient()
+check("fetch_rw_books respects limit", len(pfc2.fetch_rw_books(limit=1)), 1)
 
 # --- rate_text tier validation (H2 fix) — stub the LLM call ----------------
 import readwise_tools.rate_document as rd

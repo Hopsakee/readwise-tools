@@ -1,7 +1,14 @@
 # readwise-tools
 
-Small, composable CLI tools over the [Readwise Reader API v3](https://readwise.io/reader_api):
-list documents, fetch a document's text + metadata, and move documents between locations.
+Small, composable CLI tools over two distinct Readwise products/APIs — same
+token, different bases. The prefix tells you which one a command hits:
+
+- **`rwr-*`** — [Readwise Reader API](https://readwise.io/reader_api) (v3): the reading-inbox
+  product (articles, videos, podcast transcripts). List/get/move/update documents.
+- **`rw-*`** — classic Readwise API (v2): the highlights product (where Snipd podcast
+  highlights land). `rw-books` lists highlighted sources; `rw-prompt` doesn't hit
+  Readwise at all (it reads a local prompts-library clone) but keeps the `rw-` prefix
+  since it's part of the same toolbox.
 
 Built to feed a personal Library archive pipeline (Spotify-podcast transcripts → Library →
 wiki/recall), but each tool is a standalone, pipe-friendly CLI that emits JSON to stdout.
@@ -9,15 +16,15 @@ wiki/recall), but each tool is a standalone, pipe-friendly CLI that emits JSON t
 ## Install
 
 ```bash
-uv sync            # create the venv and install the three console scripts
+uv sync            # create the venv and install the console scripts
 ```
 
 Run via `uv run`:
 
 ```bash
-uv run rw-list --location new
-uv run rw-get <document_id> --text
-uv run rw-move <document_id> archive
+uv run rwr-list --location new
+uv run rwr-get <document_id> --text
+uv run rwr-move <document_id> archive
 ```
 
 ## Token
@@ -38,15 +45,15 @@ chmod 600 ~/.config/readwise-tools/token
 
 Get a token at <https://readwise.io/access_token>. See `.env.example` for details.
 
-## Tools
+## Reader tools (`rwr-*`)
 
-### `rw-list` — list documents in a location
+### `rwr-list` — list documents in a location
 
 ```bash
-uv run rw-list --location new
-uv run rw-list --location new --category podcast --domain open.spotify.com
-uv run rw-list --location archive --limit 50 --fields id,title,source_url
-uv run rw-list --location later --fields all          # full document objects
+uv run rwr-list --location new
+uv run rwr-list --location new --category podcast --domain open.spotify.com
+uv run rwr-list --location archive --limit 50 --fields id,title,source_url
+uv run rwr-list --location later --fields all          # full document objects
 ```
 
 | flag | default | meaning |
@@ -60,41 +67,67 @@ uv run rw-list --location later --fields all          # full document objects
 
 Output: a JSON array of documents.
 
-### `rw-get` — one document's metadata + transcript
+### `rwr-get` — one document's metadata + transcript
 
 ```bash
-uv run rw-get 01abc...            # metadata + raw html_content
-uv run rw-get 01abc... --text     # transcript as clean plain text (timestamps stripped)
-uv run rw-get 01abc... --text --keep-timestamps
+uv run rwr-get 01abc...            # metadata + raw html_content
+uv run rwr-get 01abc... --text     # transcript as clean plain text (timestamps stripped)
+uv run rwr-get 01abc... --text --keep-timestamps
 ```
 
 For podcasts, the transcript comes back inside `html_content`; `--text` strips HTML and
 `[0:00]`-style timestamps into readable prose.
 
-### `rw-move` — move a document
+### `rwr-move` — move a document
 
 ```bash
-uv run rw-move 01abc... archive   # e.g. inbox -> archive after archiving its transcript
+uv run rwr-move 01abc... archive   # e.g. inbox -> archive after archiving its transcript
 ```
 
 Target location must be one of `new` / `later` / `archive` / `feed`.
 
-### `rw-update` — modify a document (tags / notes / location)
+### `rwr-update` — modify a document (tags / notes / location)
 
 ```bash
-rw-update <id> --tags "python programming" --location later
-rw-update <id> --notes "my note"          # only the flags you pass are sent
+rwr-update <id> --tags "python programming" --location later
+rwr-update <id> --notes "my note"          # only the flags you pass are sent
 ```
 
 Note: `--tags` **replaces** the document's tags (it does not merge). Flags use
 underscores (`--set_empty_notes`), matching the other tools.
 
-## Rate & tag pipeline (n8n "Rate and tag sources" rebuild)
+### `rwr-save` — save a URL to Reader
 
-Three building-block CLIs plus an orchestrator resurrect the old n8n workflow as
-owned code. The LLM is reached only through `bun ~/.claude/PAI/TOOLS/Inference.ts`
-(`--level fast` = Haiku, the cheapest tier; one flag to swap models later), and
-prompts come from the locally-cloned `promptslibrarysync` repo.
+```bash
+uv run rwr-save "https://open.spotify.com/episode/abc123"
+uv run rwr-save "https://example.com/article" --tags "podcast,to-read" --location new
+```
+
+Idempotent-by-url: saving an already-known URL returns the existing doc, no duplicate.
+**Not** idempotent on location — re-saving an existing doc resurfaces it to `location=new`
+even with no `--location` passed (live-verified 2026-07-09). Does not trigger transcription
+for a podcast URL — that's still a manual "Load Transcript" click in Reader itself.
+
+## Classic Readwise tools (`rw-*`)
+
+### `rw-books` — list highlighted sources (classic Readwise)
+
+```bash
+uv run rw-books --category podcasts --limit 20
+uv run rw-books --category podcasts --fields all
+```
+
+| flag | default | meaning |
+|------|---------|---------|
+| `--category` | — | server-side category filter (`podcasts`, `books`, `articles`, …) |
+| `--updated-after` | — | ISO-8601 `updated__gt` cutoff |
+| `--limit` | `0` | cap total returned (0 = no cap; paginates fully via DRF `next`) |
+| `--fields` | id,title,author,category,source,source_url,highlights_url,num_highlights,updated | comma-separated fields, or `all` |
+
+Every result has `num_highlights >= 1` by construction — a book record only exists in
+classic Readwise if it has at least one highlight, so there's no separate "has highlights"
+filter to apply. `source_url` is the Snipd share link for Snipd-sourced podcasts;
+`highlights_url` is Readwise's own highlight-review page (a different URL, easy to confuse).
 
 ### `rw-prompt` — fetch a prompt from the prompts-sync-library
 
@@ -103,26 +136,35 @@ rw-prompt estimate-quality            # git pull, then print prompts-latest/esti
 rw-prompt add-topic-tags --no_pull    # read the cached copy, no pull
 ```
 
-### `rw-rate` — rate a document's reading-ROI tier (S/A/B/C/D)
+Doesn't hit either Readwise API — reads the locally-cloned `promptslibrarysync` repo.
+
+## Rate & tag pipeline (n8n "Rate and tag sources" rebuild)
+
+Three building-block CLIs plus an orchestrator resurrect the old n8n workflow as
+owned code. The LLM is reached only through `bun ~/.claude/PAI/TOOLS/Inference.ts`
+(`--level fast` = Haiku, the cheapest tier; one flag to swap models later), and
+prompts come from the locally-cloned `promptslibrarysync` repo.
+
+### `rwr-rate` — rate a document's reading-ROI tier (S/A/B/C/D)
 
 ```bash
-rw-rate --id <doc>                    # fetch + rate a Reader doc
-cat article.md | rw-rate --text_file -
+rwr-rate --id <doc>                    # fetch + rate a Reader doc
+cat article.md | rwr-rate --text_file -
 ```
 Output: `{tier, model, quality}`. Uses the `estimate-quality` prompt.
 
-### `rw-tag` — topic tags from a fixed vocabulary
+### `rwr-tag` — topic tags from a fixed vocabulary
 
 ```bash
-rw-tag --id <doc>                     # tags chosen ONLY from add-topic-tags' embedded vocabulary (dup-proof)
+rwr-tag --id <doc>                     # tags chosen ONLY from add-topic-tags' embedded vocabulary (dup-proof)
 ```
 Output: a JSON array of tags.
 
-### `rw-rate-tag` — the nightly orchestrator
+### `rwr-rate-tag` — the nightly orchestrator
 
 ```bash
-rw-rate-tag --dry_run --limit 2       # rate+tag, print the planned PATCH, write nothing
-rw-rate-tag --limit 10                # the scheduled behavior
+rwr-rate-tag --dry_run --limit 2       # rate+tag, print the planned PATCH, write nothing
+rwr-rate-tag --limit 10                # the scheduled behavior
 ```
 
 For each `location=new` item, capped by `--limit`: skip if already `_rating`-tagged;
@@ -136,10 +178,13 @@ and scrubs `CLAUDECODE`/auth env so the nested `claude` uses subscription billin
 
 ## API notes
 
-- LIST is rate-limited to 20/min, UPDATE to 50/min; the client throttles LIST calls and
-  honors `Retry-After` on `429`.
+- Reader LIST is rate-limited to 20/min, UPDATE to 50/min; the client throttles LIST calls
+  and honors `Retry-After` on `429`. Classic-Readwise `/books/` reuses the same LIST throttle.
 - The Reader API has **no** server-side domain filter — `--domain` filters client-side.
-- Document text is only returned when `withHtmlContent=true`; `rw-get` always requests it.
+- Document text is only returned when `withHtmlContent=true`; `rwr-get` always requests it.
+- Reader pagination is cursor-based (`pageCursor`/`nextPageCursor`); classic Readwise
+  `/books/` uses standard DRF `next`-URL pagination — different shapes, same `_call()` retry
+  wrapper (it accepts an absolute URL to follow either).
 
 ## License
 
