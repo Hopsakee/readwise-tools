@@ -1,4 +1,4 @@
-"""rw-rate-tag — the nightly orchestrator (faithful n8n "Rate and tag sources").
+"""rwr-rate-tag — the nightly orchestrator (faithful n8n "Rate and tag sources").
 
 Pipeline, per the dead n8n workflow:
   1. fetch location=new items (with html), capped by --limit

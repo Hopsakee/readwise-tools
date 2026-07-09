@@ -4,7 +4,7 @@ The prompts live in the locally-cloned `promptslibrarysync` repo under
 `prompts-latest/`. "Get the latest" == `git pull` that clone, then read the
 named file with its YAML frontmatter stripped (the body is the actual prompt).
 
-This is the single source of prompts for rw-rate and rw-tag; both import
+This is the single source of prompts for rwr-rate and rwr-tag; both import
 `load_prompt` so there is one read+refresh code path, not three.
 
 Read-only on the repo: it pulls and reads, it never commits or pushes.

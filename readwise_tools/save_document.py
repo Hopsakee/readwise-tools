@@ -1,4 +1,4 @@
-"""rw-save — save a URL to Readwise Reader (POST /save/)."""
+"""rwr-save — save a URL to Readwise Reader (POST /save/)."""
 from fastcore.script import call_parse
 
 from readwise_tools.client import ReaderClient, emit

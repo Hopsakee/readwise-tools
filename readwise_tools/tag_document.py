@@ -1,4 +1,4 @@
-"""rw-tag — assign topic tags to a document from a fixed-vocabulary prompt.
+"""rwr-tag — assign topic tags to a document from a fixed-vocabulary prompt.
 
 Duplicate-tag prevention is structural: the `add-topic-tags` prompt embeds the
 full controlled vocabulary, so the model can only choose from existing tags —

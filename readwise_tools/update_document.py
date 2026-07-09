@@ -1,8 +1,8 @@
-"""rw-update — modify a Reader document: tags, notes, and/or location.
+"""rwr-update — modify a Reader document: tags, notes, and/or location.
 
 The "modify" half of "read and modify items in Readwise Reader" (the "read"
-half is rw-list / rw-get). Only the flags you pass are sent in the PATCH, so
-`rw-update <id> --location archive` won't disturb tags or notes.
+half is rwr-list / rwr-get). Only the flags you pass are sent in the PATCH, so
+`rwr-update <id> --location archive` won't disturb tags or notes.
 """
 import sys
 

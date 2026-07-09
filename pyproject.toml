@@ -10,15 +10,17 @@ dependencies = [
 ]
 
 [project.scripts]
-rw-list = "readwise_tools.list_documents:main"
-rw-get = "readwise_tools.get_document:main"
-rw-move = "readwise_tools.move_document:main"
-rw-update = "readwise_tools.update_document:main"
+# rwr- hits Readwise Reader (v3 API); rw- hits classic Readwise (v2 API).
+# rw-prompt hits neither (reads the local prompts-sync-library clone).
+rwr-list = "readwise_tools.list_documents:main"
+rwr-get = "readwise_tools.get_document:main"
+rwr-move = "readwise_tools.move_document:main"
+rwr-update = "readwise_tools.update_document:main"
 rw-prompt = "readwise_tools.prompt_sync:main"
-rw-rate = "readwise_tools.rate_document:main"
-rw-tag = "readwise_tools.tag_document:main"
-rw-rate-tag = "readwise_tools.rate_tag:main"
-rw-save = "readwise_tools.save_document:main"
+rwr-rate = "readwise_tools.rate_document:main"
+rwr-tag = "readwise_tools.tag_document:main"
+rwr-rate-tag = "readwise_tools.rate_tag:main"
+rwr-save = "readwise_tools.save_document:main"
 rw-books = "readwise_tools.list_books:main"
 
 [build-system]

@@ -1,7 +1,8 @@
-"""rw-books — list classic Readwise (v2) "book" records (GET /api/v2/books/).
+"""rw-books — list classic Readwise "book" records (GET /api/v2/books/).
 
-Different product/API from `rw-list` (Reader v3 inbox). Classic Readwise is
-where Snipd podcast highlights land; each book carries `num_highlights`.
+Different product/API from `rwr-list` (Reader inbox). Classic Readwise is
+where Snipd podcast highlights land; each book carries `num_highlights`
+(always >= 1 by construction — a book only exists here if it has a highlight).
 """
 from fastcore.script import call_parse
 
@@ -15,15 +16,13 @@ def main(
     category: str = "",             # server-side category filter (podcasts, books, articles, ...)
     updated_after: str = "",        # ISO-8601 updated__gt cutoff
     limit: int = 0,                 # cap on total books returned (0 = no cap)
-    min_highlights: int = 0,        # client-side filter: only books with >= N highlights
     fields: str = DEFAULT_FIELDS,   # comma-separated fields to emit; "all" for full records
 ):
     "List classic-Readwise book records as a JSON array."
-    books = ReaderClient().fetch_v2_books(
+    books = ReaderClient().fetch_rw_books(
         category=category or None,
         updated_after=updated_after or None,
         limit=limit or None,
-        min_highlights=min_highlights,
     )
     if fields.strip().lower() == "all":
         emit(books)

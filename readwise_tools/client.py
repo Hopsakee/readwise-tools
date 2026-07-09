@@ -1,4 +1,6 @@
-"""Readwise Reader API v3 client — token-safe, rate-limit aware.
+"""Readwise Reader (`RWR_API_BASE`) + classic Readwise (`RW_API_BASE`) client —
+token-safe, rate-limit aware. Same token, two distinct products/APIs; method
+and CLI names follow suit: `rwr-*` hits Reader, `rw-*` hits classic Readwise.
 
 Token resolution order (the value is NEVER printed or logged):
   1. env READWISE_TOKEN
@@ -21,10 +23,10 @@ from pathlib import Path
 
 import requests
 
-API_BASE = "https://readwise.io/api/v3"
+RWR_API_BASE = "https://readwise.io/api/v3"  # Readwise Reader
 # Classic Readwise (highlights product — Snipd sync lands here). Same token,
-# different product/API from the Reader v3 base above. Never conflate the two.
-API_BASE_V2 = "https://readwise.io/api/v2"
+# different product/API from the Reader base above. Never conflate the two.
+RW_API_BASE = "https://readwise.io/api/v2"  # classic Readwise
 
 # Assembled from parts (see module docstring): ~/.config/readwise-tools/token
 _DEFAULT_TOKEN_PATH = Path.home() / ".config" / "readwise-tools" / "token"
@@ -94,11 +96,12 @@ class ReaderClient:
     def _call(self, method: str, path: str, kind: str, **kw) -> dict:
         """Request and return parsed JSON. Any failure becomes a clean SystemExit.
 
-        `path` is normally a v3-relative path ("/list/"); pass an absolute URL
-        (starting with "http") to hit a different base (v2, or a DRF `next` /
-        `nextPageCursor` pagination link) through the same retry/throttle logic.
+        `path` is normally a Reader-relative path ("/list/"); pass an absolute
+        URL (starting with "http") to hit a different base (classic Readwise,
+        or a DRF `next` / `nextPageCursor` pagination link) through the same
+        retry/throttle logic.
         """
-        url = path if path.startswith("http") else f"{API_BASE}{path}"
+        url = path if path.startswith("http") else f"{RWR_API_BASE}{path}"
         try:
             for _ in range(self.MAX_RETRIES):
                 self._throttle(kind)
@@ -183,28 +186,29 @@ class ReaderClient:
             body["location"] = location
         return self._call("POST", "/save/", "update", json=body)
 
-    def fetch_v2_books(
+    def fetch_rw_books(
         self,
         category: str | None = None,
         updated_after: str | None = None,
         limit: int | None = None,
-        min_highlights: int = 0,
     ) -> list[dict]:
-        """Return classic Readwise (v2) "book" records — GET /api/v2/books/.
+        """Return classic Readwise "book" records — GET /api/v2/books/.
 
-        This is a DIFFERENT product/API from the Reader v3 `fetch()` above (same
-        token, different base — see API_BASE_V2). Classic Readwise is where Snipd
-        podcast highlights land; each book record carries `num_highlights`, the
-        highlight-count selection signal Pass A filters on (`min_highlights=1`
-        makes that filter explicit rather than assumed). Confirmed fields on a
-        real podcast book (2026-07-09 live probe): `source` ("snipd"),
-        `source_url` (the Snipd share link — the highlight_url the register
-        keys on), `highlights_url` (readwise.io/bookreview/<id> — Readwise's own
-        highlight page, NOT the Snipd link). Paginates via the standard DRF
-        `next` URL until exhausted or `limit` is reached.
+        This is a DIFFERENT product/API from the Reader `fetch()` above (same
+        token, different base — see RW_API_BASE). Classic Readwise is where
+        Snipd podcast highlights land; each book record carries `num_highlights`
+        (Jelle, 2026-07-09: no explicit "has highlights" filter is needed — a
+        book record only exists in classic Readwise if it has at least one
+        highlight, so `num_highlights` is always >= 1 by construction here).
+        Confirmed fields on a real podcast book (2026-07-09 live probe):
+        `source` ("snipd"), `source_url` (the Snipd share link — the
+        highlight_url the register keys on), `highlights_url`
+        (readwise.io/bookreview/<id> — Readwise's own highlight page, NOT the
+        Snipd link). Paginates via the standard DRF `next` URL until exhausted
+        or `limit` is reached.
         """
         out: list[dict] = []
-        url = f"{API_BASE_V2}/books/"
+        url = f"{RW_API_BASE}/books/"
         params: dict | None = {"page_size": 100}
         if category:
             params["category"] = category
@@ -212,12 +216,9 @@ class ReaderClient:
             params["updated__gt"] = updated_after
         while url:
             data = self._call("GET", url, "list", params=params)
-            for b in data.get("results", []):
-                if (b.get("num_highlights") or 0) < min_highlights:
-                    continue
-                out.append(b)
-                if limit and len(out) >= limit:
-                    return out
+            out.extend(data.get("results", []))
+            if limit and len(out) >= limit:
+                return out[:limit]
             url = data.get("next")
             params = None  # `next` already carries the full querystring
         return out
@@ -239,7 +240,7 @@ class ReaderClient:
     ) -> dict:
         """PATCH /update/<id>/ sending ONLY the fields that were provided.
 
-        This is the general modify endpoint behind rw-update; `move` is the
+        This is the general modify endpoint behind rwr-update; `move` is the
         location-only special case. A field left as None is omitted from the
         body entirely, so callers can change tags without touching notes, etc.
         Returns the parsed API response (empty dict if nothing to send).
