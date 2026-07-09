@@ -22,6 +22,9 @@ from pathlib import Path
 import requests
 
 API_BASE = "https://readwise.io/api/v3"
+# Classic Readwise (highlights product — Snipd sync lands here). Same token,
+# different product/API from the Reader v3 base above. Never conflate the two.
+API_BASE_V2 = "https://readwise.io/api/v2"
 
 # Assembled from parts (see module docstring): ~/.config/readwise-tools/token
 _DEFAULT_TOKEN_PATH = Path.home() / ".config" / "readwise-tools" / "token"
@@ -89,8 +92,13 @@ class ReaderClient:
         return min(wait + 0.5, cls.MAX_BACKOFF)
 
     def _call(self, method: str, path: str, kind: str, **kw) -> dict:
-        """Request and return parsed JSON. Any failure becomes a clean SystemExit."""
-        url = f"{API_BASE}{path}"
+        """Request and return parsed JSON. Any failure becomes a clean SystemExit.
+
+        `path` is normally a v3-relative path ("/list/"); pass an absolute URL
+        (starting with "http") to hit a different base (v2, or a DRF `next` /
+        `nextPageCursor` pagination link) through the same retry/throttle logic.
+        """
+        url = path if path.startswith("http") else f"{API_BASE}{path}"
         try:
             for _ in range(self.MAX_RETRIES):
                 self._throttle(kind)
@@ -149,6 +157,70 @@ class ReaderClient:
             cursor = data.get("nextPageCursor")
             if not cursor:
                 return out
+
+    def save(self, url: str, tags: list[str] | None = None, location: str | None = None) -> dict:
+        """POST /save/ — create a Reader document from a URL.
+
+        Reader's save endpoint is idempotent-by-url (no duplicate doc for an
+        already-known URL) but NOT idempotent on location: live-verified
+        2026-07-09 — re-saving an existing later/archive doc resurfaces it to
+        `location=new`, even with no `location=` passed. If Pass A's register
+        can't rule out an episode already being in Reader, a redundant save()
+        will quietly bump it back into the inbox. Callers that care about
+        location stability must pass `location=` explicitly to pin it back down,
+        or check the register before calling save() at all.
+
+        Returns the parsed response — sparse: only `{id, url}` observed live,
+        NOT the full doc (no `title`/`category`); call `get(id)` after if more
+        fields are needed. Does NOT trigger transcription for a podcast URL —
+        that stays a manual "Load Transcript" click in Reader (see ISA
+        `20260709-podcast-highlight-lane` STAP-0 finding).
+        """
+        body: dict = {"url": url}
+        if tags:
+            body["tags"] = tags
+        if location:
+            body["location"] = location
+        return self._call("POST", "/save/", "update", json=body)
+
+    def fetch_v2_books(
+        self,
+        category: str | None = None,
+        updated_after: str | None = None,
+        limit: int | None = None,
+        min_highlights: int = 0,
+    ) -> list[dict]:
+        """Return classic Readwise (v2) "book" records — GET /api/v2/books/.
+
+        This is a DIFFERENT product/API from the Reader v3 `fetch()` above (same
+        token, different base — see API_BASE_V2). Classic Readwise is where Snipd
+        podcast highlights land; each book record carries `num_highlights`, the
+        highlight-count selection signal Pass A filters on (`min_highlights=1`
+        makes that filter explicit rather than assumed). Confirmed fields on a
+        real podcast book (2026-07-09 live probe): `source` ("snipd"),
+        `source_url` (the Snipd share link — the highlight_url the register
+        keys on), `highlights_url` (readwise.io/bookreview/<id> — Readwise's own
+        highlight page, NOT the Snipd link). Paginates via the standard DRF
+        `next` URL until exhausted or `limit` is reached.
+        """
+        out: list[dict] = []
+        url = f"{API_BASE_V2}/books/"
+        params: dict | None = {"page_size": 100}
+        if category:
+            params["category"] = category
+        if updated_after:
+            params["updated__gt"] = updated_after
+        while url:
+            data = self._call("GET", url, "list", params=params)
+            for b in data.get("results", []):
+                if (b.get("num_highlights") or 0) < min_highlights:
+                    continue
+                out.append(b)
+                if limit and len(out) >= limit:
+                    return out
+            url = data.get("next")
+            params = None  # `next` already carries the full querystring
+        return out
 
     def get(self, doc_id: str, with_html: bool = True) -> dict | None:
         docs = self.fetch(doc_id=valid_id(doc_id), with_html=with_html)

@@ -18,6 +18,8 @@ rw-prompt = "readwise_tools.prompt_sync:main"
 rw-rate = "readwise_tools.rate_document:main"
 rw-tag = "readwise_tools.tag_document:main"
 rw-rate-tag = "readwise_tools.rate_tag:main"
+rw-save = "readwise_tools.save_document:main"
+rw-books = "readwise_tools.list_books:main"
 
 [build-system]
 requires = ["hatchling"]

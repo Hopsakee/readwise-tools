@@ -83,6 +83,56 @@ fc.update("abc123", notes="hi")
 check("update notes-only", captured["json"], {"notes": "hi"})
 check("update empty no-op returns {}", fc.update("abc123"), {})
 
+# --- save() body construction + path (H1: podcast-highlight-lane) -----------
+fc.save("https://open.spotify.com/episode/abc123")
+check("save path", captured.get("json"), {"url": "https://open.spotify.com/episode/abc123"})
+check("save method is POST", captured["method"], "POST")
+fc.save("https://x.example/y", tags=["podcast"], location="new")
+check("save with tags+location",
+      captured["json"],
+      {"url": "https://x.example/y", "tags": ["podcast"], "location": "new"})
+
+# --- fetch_v2_books() pagination + absolute-URL _call (H1) ------------------
+pages = [
+    {"results": [{"id": 1, "category": "podcasts"}], "next": "https://readwise.io/api/v2/books/?page=2"},
+    {"results": [{"id": 2, "category": "podcasts"}], "next": None},
+]
+
+
+class PagedFakeClient(ReaderClient):
+    def __init__(self):
+        self._calls = []
+
+    def _call(self, method, path, kind, **kw):
+        self._calls.append((method, path, kw.get("params")))
+        return pages[len(self._calls) - 1]
+
+
+pfc = PagedFakeClient()
+books = pfc.fetch_v2_books(category="podcasts")
+check("fetch_v2_books collects both pages", [b["id"] for b in books], [1, 2])
+check("fetch_v2_books first call hits /api/v2/books/", pfc._calls[0][1], "https://readwise.io/api/v2/books/")
+check("fetch_v2_books first call sends category param", pfc._calls[0][2], {"page_size": 100, "category": "podcasts"})
+check("fetch_v2_books follows `next` verbatim (no re-added params)",
+      (pfc._calls[1][1], pfc._calls[1][2]),
+      ("https://readwise.io/api/v2/books/?page=2", None))
+
+pfc2 = PagedFakeClient()
+check("fetch_v2_books respects limit", len(pfc2.fetch_v2_books(limit=1)), 1)
+
+
+class ZeroHighlightFakeClient(ReaderClient):
+    def __init__(self):
+        pass
+
+    def _call(self, method, path, kind, **kw):
+        return {"results": [{"id": 1, "num_highlights": 0}, {"id": 2, "num_highlights": 3}], "next": None}
+
+
+zfc = ZeroHighlightFakeClient()
+check("fetch_v2_books min_highlights filters out zero-highlight books (ISC-2)",
+      [b["id"] for b in zfc.fetch_v2_books(min_highlights=1)], [2])
+
 # --- rate_text tier validation (H2 fix) — stub the LLM call ----------------
 import readwise_tools.rate_document as rd
 
