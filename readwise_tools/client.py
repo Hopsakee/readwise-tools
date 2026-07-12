@@ -207,21 +207,53 @@ class ReaderClient:
         Snipd link). Paginates via the standard DRF `next` URL until exhausted
         or `limit` is reached.
         """
-        out: list[dict] = []
-        url = f"{RW_API_BASE}/books/"
-        params: dict | None = {"page_size": 100}
+        params: dict = {"page_size": 100}
         if category:
             params["category"] = category
         if updated_after:
             params["updated__gt"] = updated_after
+        return self._paginate_v2("/books/", params, limit)
+
+    def _paginate_v2(self, endpoint: str, params: dict, limit: int | None) -> list[dict]:
+        """Walk a classic-Readwise (RW_API_BASE) DRF-paginated list endpoint.
+
+        Shared by `fetch_rw_books` and `fetch_rw_book_highlights`: seed with the
+        first-page `params`, then follow the `next` cursor (which already carries
+        the full querystring) until exhausted or `limit` records collected.
+        """
+        out: list[dict] = []
+        url: str | None = f"{RW_API_BASE}{endpoint}"
+        next_params: dict | None = params
         while url:
-            data = self._call("GET", url, "list", params=params)
+            data = self._call("GET", url, "list", params=next_params)
             out.extend(data.get("results", []))
             if limit and len(out) >= limit:
                 return out[:limit]
             url = data.get("next")
-            params = None  # `next` already carries the full querystring
+            next_params = None  # `next` already carries the full querystring
         return out
+
+    def fetch_rw_book_highlights(
+        self,
+        book_id: int | str,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Return a classic Readwise book's highlights — GET /api/v2/highlights/.
+
+        Same product/API as `fetch_rw_books` (classic Readwise, RW_API_BASE), a
+        DIFFERENT product from the Reader `fetch()` above. Given a book id (the
+        `id` field on a `fetch_rw_books` record), returns that book's highlight
+        records. For a Snipd-synced podcast book each highlight is a clipped
+        passage: the fields that matter downstream are `text` (the highlighted
+        passage — verbatim), `note` (any note Jelle attached), and `location`
+        (a position marker; for podcasts an offset, not a page). Paginates via
+        the standard DRF `next` URL until exhausted or `limit` is reached.
+
+        `book_id` is sent as a query parameter (never interpolated into the
+        path), so a hostile value cannot escape the URL. Returns [] for a book
+        with no highlights.
+        """
+        return self._paginate_v2("/highlights/", {"book_id": book_id, "page_size": 100}, limit)
 
     def get(self, doc_id: str, with_html: bool = True) -> dict | None:
         docs = self.fetch(doc_id=valid_id(doc_id), with_html=with_html)

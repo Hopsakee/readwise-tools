@@ -134,5 +134,41 @@ rd.run_inference = lambda system, user, level="fast": "not json at all"
 check("rate_text non-json -> error", "error" in rd.rate_text("text", prompt_body="P"), True)
 check("rate_text empty text -> error", "error" in rd.rate_text("", prompt_body="P"), True)
 
+# --- fetch_rw_book_highlights: pagination + book_id param --------------------
+class PagingClient(ReaderClient):
+    """Stub _call to return two DRF pages, capturing the calls made."""
+
+    def __init__(self):
+        self.calls = []
+        self._pages = [
+            {"results": [{"id": 1, "text": "h1"}, {"id": 2, "text": "h2"}],
+             "next": "https://readwise.io/api/v2/highlights/?book_id=99&page=2"},
+            {"results": [{"id": 3, "text": "h3"}], "next": None},
+        ]
+
+    def _call(self, method, path, kind, **kw):
+        self.calls.append({"method": method, "path": path, "params": kw.get("params")})
+        return self._pages[len(self.calls) - 1]
+
+
+pc = PagingClient()
+hs = pc.fetch_rw_book_highlights(99)
+check("fetch_rw_book_highlights follows next across pages", [h["id"] for h in hs], [1, 2, 3])
+check("fetch_rw_book_highlights sends book_id as a query param (not path)",
+      pc.calls[0]["params"], {"book_id": 99, "page_size": 100})
+check("fetch_rw_book_highlights hits the classic /highlights/ endpoint",
+      pc.calls[0]["path"].endswith("/api/v2/highlights/"), True)
+check("fetch_rw_book_highlights drops params on the follow-up page (next carries them)",
+      pc.calls[1]["params"], None)
+
+pc2 = PagingClient()
+pc2._pages = [{"results": [{"id": 1, "text": "h1"}, {"id": 2, "text": "h2"}], "next": None}]
+check("fetch_rw_book_highlights honors limit", len(pc2.fetch_rw_book_highlights(1, limit=1)), 1)
+
+pc3 = PagingClient()
+pc3._pages = [{"results": [], "next": None}]
+check("fetch_rw_book_highlights returns [] for a book with no highlights",
+      pc3.fetch_rw_book_highlights(7), [])
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
