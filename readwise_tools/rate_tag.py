@@ -32,6 +32,39 @@ from readwise_tools.tag_document import tag_text
 CONSUME_SELECTION_REPO = Path.home() / "Code" / "l-space-librarian"
 MAX_WORDS = 10000
 
+# Podcast-transcript deferral (2026-07-19). A Snipd->Reader podcast reaches
+# `location=new` as SHOW-NOTES ONLY and stays that way until Jelle presses
+# Reader's "Load Transcript" by hand (days-weeks later — the API cannot trigger
+# it; ISA 20260709-podcast-highlight-lane STAP-0). Rating it now scores the
+# episode *description*: a nonsense tier + incomplete tags that poison
+# consume-selection and are then frozen forever by the `_already_rated` guard.
+# So an un-transcribed podcast is DEFERRED (left untouched in `new`) until it
+# crosses the transcript threshold, after which it rates normally on the full
+# transcript. The threshold mirrors _TOLIBRARY_PODCAST pass_b ISC-13 VERBATIM
+# (word_count >= 1200 OR text length >= 8000 chars) — the constant can't be
+# shared across repos, so it's duplicated with this pointer. A saved
+# Apple-Podcasts URL carries Reader category "podcast" (STAP-0, live-verified);
+# "podcasts" is accepted defensively.
+PODCAST_CATEGORIES = {"podcast", "podcasts"}
+PODCAST_WORD_FLOOR = 1200
+PODCAST_CHAR_FLOOR = 8000
+
+
+def _is_untranscribed_podcast(doc: dict, text: str) -> bool:
+    """True if `doc` is a podcast Reader has not transcribed yet.
+
+    Such a doc must be left in `new` untouched (no rate, no tag, no move, no LLM
+    call) so the 04:00 job never scores its show-notes. Once Reader transcribes
+    it (word_count or text length crosses the floor) this returns False and it
+    rates normally, on the full transcript, exactly like any other item.
+    """
+    if (doc.get("category") or "").lower() not in PODCAST_CATEGORIES:
+        return False
+    wc = doc.get("word_count")
+    if isinstance(wc, int) and wc >= PODCAST_WORD_FLOOR:
+        return False
+    return len(text or "") < PODCAST_CHAR_FLOOR
+
 
 def to_markdown(obj, indent: int = 0) -> str:
     """Render a (possibly nested) quality JSON object as readable markdown.
@@ -85,7 +118,7 @@ def _feed_consume_selection(repo: Path) -> list[str]:
 
 @call_parse
 def main(
-    limit: int = 10,         # max items to process per run (scheduled run uses 10)
+    limit: int = 15,         # max items to process per run (scheduled run uses 15)
     location: str = "new",   # Reader location to drain
     level: str = "fast",     # inference level: fast|standard|smart
     model_slug: str = "claude-haiku",  # model component of the _rating tag
@@ -98,7 +131,7 @@ def main(
     "Rate + tag new Reader items, write back, and feed consume-selection."
     # Cost guard: refuse an unbounded run. `--limit 0` (the "unlimited" convention
     # elsewhere) would unleash 2 LLM calls per item across the whole inbox — exactly
-    # what this guard exists to prevent. The scheduled wrapper always passes 10.
+    # what this guard exists to prevent. The scheduled wrapper always passes 15.
     if limit < 1:
         emit({"error": "refusing unbounded run", "hint": "pass --limit >= 1 (scheduled run uses 10)"})
         sys.exit(2)
@@ -109,7 +142,7 @@ def main(
     q_body = load_prompt(quality_prompt, pull=not no_pull)
     t_body = load_prompt(tags_prompt, pull=False)  # already pulled above
 
-    processed = manual = skipped = errors = 0
+    processed = manual = skipped = errors = deferred = 0
     results = []
     for doc in docs:
         doc_id = doc.get("id")
@@ -120,6 +153,15 @@ def main(
             continue
         wc = doc.get("word_count") or 0
         text = html_to_text(doc.get("html_content", "")) or (doc.get("summary") or "")
+
+        # Defer un-transcribed podcasts: never rate show-notes. Leave in `new`,
+        # untouched (no tag, no move, no LLM) — a later run rates it once Reader
+        # has transcribed it; Pass B drains it to Library independently.
+        if _is_untranscribed_podcast(doc, text):
+            deferred += 1
+            results.append({"id": doc_id, "action": "DEFER_PODCAST_PENDING_TRANSCRIPT",
+                            "word_count": doc.get("word_count")})
+            continue
 
         # Gate: too long or no text -> PROCESS_MANUAL, leave the LLM untouched.
         if (isinstance(wc, int) and wc > MAX_WORDS) or not text.strip():
@@ -162,14 +204,17 @@ def main(
     feed_errors = sum(1 for line in feed_log if line.startswith("ERR"))
     errors += feed_errors
 
-    emit({
+    summary = {
         "dry_run": dry_run,
         "seen": len(docs),
         "processed": processed,
         "process_manual": manual,
+        "deferred": deferred,
         "skipped_already_rated": skipped,
         "errors": errors,
         "feed_errors": feed_errors,
         "results": results,
         "consume_selection_feed": feed_log,
-    })
+    }
+    emit(summary)
+    return summary

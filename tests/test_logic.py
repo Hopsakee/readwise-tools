@@ -170,5 +170,73 @@ pc3._pages = [{"results": [], "next": None}]
 check("fetch_rw_book_highlights returns [] for a book with no highlights",
       pc3.fetch_rw_book_highlights(7), [])
 
+# --- podcast-transcript deferral (rate_tag, 2026-07-19) ---------------------
+import readwise_tools.rate_tag as rt
+
+# ISC-1..7 — _is_untranscribed_podcast truth table
+check("ISC-1 show-notes podcast (wc None, <8000 chars) -> deferred",
+      rt._is_untranscribed_podcast({"category": "podcast", "word_count": None}, "x" * 3767), True)
+check("ISC-2 transcribed podcast (wc 5000) -> not deferred",
+      rt._is_untranscribed_podcast({"category": "podcast", "word_count": 5000}, ""), False)
+check("ISC-3 podcast with long text (>=8000 chars) -> not deferred",
+      rt._is_untranscribed_podcast({"category": "podcast", "word_count": None}, "y" * 8000), False)
+check("ISC-4 article (short) -> not deferred",
+      rt._is_untranscribed_podcast({"category": "article", "word_count": None}, "z" * 100), False)
+check("ISC-5 plural 'podcasts' accepted defensively -> deferred",
+      rt._is_untranscribed_podcast({"category": "podcasts", "word_count": None}, "x" * 10), True)
+check("ISC-5b case-insensitive: 'Podcast' -> deferred (advisor fragility)",
+      rt._is_untranscribed_podcast({"category": "Podcast", "word_count": None}, "x" * 10), True)
+check("ISC-5c missing category -> not deferred (safe direction)",
+      rt._is_untranscribed_podcast({"word_count": None}, "x" * 10), False)
+check("ISC-6 Anti: podcast at wc floor (1200) NOT deferred",
+      rt._is_untranscribed_podcast({"category": "podcast", "word_count": 1200}, ""), False)
+check("ISC-7 Anti: article NEVER deferred regardless of length",
+      rt._is_untranscribed_podcast({"category": "article", "word_count": 50}, "a" * 20), False)
+
+
+# ISC-8..12,15 — full main() loop, client + LLM + prompt-load stubbed (no network)
+class _FakeReader:
+    def __init__(self, docs):
+        self._docs = docs
+        self.updates = []
+
+    def fetch(self, location=None, with_html=False, limit=None, **kw):
+        return self._docs[:limit] if limit else list(self._docs)
+
+    def update(self, doc_id, **kw):
+        self.updates.append((doc_id, kw))
+        return {"ok": True}
+
+
+def _run_main(docs):
+    """Run rate_tag.main over `docs` with client/LLM/prompt-load stubbed.
+    Returns (summary, fake_client, llm_calls)."""
+    fake = _FakeReader(docs)
+    llm_calls = []
+    rt.ReaderClient = lambda: fake
+    rt.load_prompt = lambda *a, **k: "PROMPT"
+    rt.rate_text = lambda text, **k: (llm_calls.append(("rate", text)) or {"tier": "B", "quality": {"TIER": "B"}})
+    rt.tag_text = lambda text, **k: (llm_calls.append(("tag", text)) or ["topic"])
+    return rt.main(limit=15, no_feed=True, no_pull=True), fake, llm_calls
+
+
+_sn, _fk, _llm = _run_main([{"id": "p1", "category": "podcast", "word_count": None,
+                             "html_content": "", "summary": "x" * 3767, "tags": []}])
+check("ISC-8 ORIGIN: show-notes podcast never updated (left in `new`)", _fk.updates, [])
+check("ISC-9 ORIGIN: run reports (deferred, processed) == (1, 0)",
+      (_sn["deferred"], _sn["processed"]), (1, 0))
+check("ISC-10 ORIGIN: no LLM call for the deferred podcast", _llm, [])
+check("ISC-15 summary carries a `deferred` field", "deferred" in _sn, True)
+
+_st, _fk2, _llm2 = _run_main([{"id": "p2", "category": "podcast", "word_count": 5000,
+                               "html_content": "<p>" + ("word " * 3000) + "</p>", "summary": "", "tags": []}])
+check("ISC-11 transcribed podcast IS rated (1 update, processed==1)",
+      (len(_fk2.updates), _st["processed"]), (1, 1))
+
+_ar, _fk3, _llm3 = _run_main([{"id": "a1", "category": "article", "word_count": 300,
+                               "html_content": "<p>short article body here</p>", "summary": "", "tags": []}])
+check("ISC-12 short article rated normally (deferred==0, processed==1)",
+      (_ar["deferred"], _ar["processed"]), (0, 1))
+
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
