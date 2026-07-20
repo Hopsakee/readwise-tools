@@ -7,7 +7,7 @@ are verified out-of-session (the cron / a normal shell), never here.
 from readwise_tools.client import ReaderClient, tag_names
 from readwise_tools.infer import extract_json
 from readwise_tools.prompt_sync import strip_frontmatter
-from readwise_tools.rate_tag import to_markdown
+from readwise_tools.rate_tag import to_markdown, _needs_manual
 from readwise_tools.tag_document import parse_tags
 from readwise_tools.update_document import _parse_tags
 
@@ -208,7 +208,7 @@ class _FakeReader:
         return {"ok": True}
 
 
-def _run_main(docs):
+def _run_main(docs, max_words=0):
     """Run rate_tag.main over `docs` with client/LLM/prompt-load stubbed.
     Returns (summary, fake_client, llm_calls)."""
     fake = _FakeReader(docs)
@@ -217,7 +217,7 @@ def _run_main(docs):
     rt.load_prompt = lambda *a, **k: "PROMPT"
     rt.rate_text = lambda text, **k: (llm_calls.append(("rate", text)) or {"tier": "B", "quality": {"TIER": "B"}})
     rt.tag_text = lambda text, **k: (llm_calls.append(("tag", text)) or ["topic"])
-    return rt.main(limit=15, no_feed=True, no_pull=True), fake, llm_calls
+    return rt.main(limit=15, max_words=max_words, no_feed=True, no_pull=True), fake, llm_calls
 
 
 _sn, _fk, _llm = _run_main([{"id": "p1", "category": "podcast", "word_count": None,
@@ -237,6 +237,34 @@ _ar, _fk3, _llm3 = _run_main([{"id": "a1", "category": "article", "word_count": 
                                "html_content": "<p>short article body here</p>", "summary": "", "tags": []}])
 check("ISC-12 short article rated normally (deferred==0, processed==1)",
       (_ar["deferred"], _ar["processed"]), (0, 1))
+
+# --- _needs_manual: opt-in word ceiling (2026-07-20) ------------------------
+# Empty text is ALWAYS manual (nothing to rate), regardless of max_words.
+check("empty text -> manual even with ceiling off", _needs_manual(0, "", 0), True)
+check("blank/whitespace text -> manual", _needs_manual(5000, "   \n ", 0), True)
+# With the ceiling OFF (0, the default), a huge transcript is NOT manual.
+check("ceiling off: 20503-word transcript is NOT manual (chaosstrategie)",
+      _needs_manual(20503, "real transcript body", 0), False)
+check("negative ceiling also means off", _needs_manual(999999, "body", -1), False)
+# With the ceiling ON, the old behaviour is exactly restorable.
+check("ceiling 10000: 20503-word doc -> manual (restored guard)",
+      _needs_manual(20503, "body", 10000), True)
+check("ceiling 10000: 9000-word doc -> NOT manual", _needs_manual(9000, "body", 10000), False)
+check("ceiling boundary: wc == max_words is NOT manual (strictly greater)",
+      _needs_manual(10000, "body", 10000), False)
+
+# End-to-end through main(): a long transcribed podcast rates by default,
+# and only PROCESS_MANUALs when the ceiling is explicitly set.
+_long = [{"id": "big", "category": "podcast", "word_count": 20503,
+          "html_content": "<p>" + ("word " * 5000) + "</p>", "summary": "", "tags": []}]
+_bs, _bf, _bl = _run_main(_long)  # default max_words=0
+check("default (unlimited): long podcast is RATED, not PROCESS_MANUAL",
+      (_bs["process_manual"], _bs["processed"]), (0, 1))
+check("default (unlimited): the LLM was actually called on the long transcript",
+      any(c[0] == "rate" for c in _bl), True)
+_bs2, _bf2, _bl2 = _run_main(_long, max_words=10000)
+check("ceiling 10000: long podcast -> PROCESS_MANUAL, no LLM call",
+      (_bs2["process_manual"], _bs2["processed"], _bl2), (1, 0, []))
 
 print(f"\n{passed} passed, {failed} failed")
 raise SystemExit(1 if failed else 0)
