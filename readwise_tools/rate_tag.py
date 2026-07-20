@@ -3,7 +3,7 @@
 Pipeline, per the dead n8n workflow:
   1. fetch location=new items (with html), capped by --limit
   2. skip items already carrying a _rating/ tag (idempotency beyond new->later)
-  3. word_count > 10000 (or empty text)  -> tag PROCESS_MANUAL, move to later, skip LLM
+  3. empty text (or word_count > --max-words, when set)  -> tag PROCESS_MANUAL, move to later, skip LLM
   4. otherwise: html->text, rate (quality tier) + tag (topic tags)
   5. tags = topic tags + `_rating/<TIER>/<model-slug>`; notes = quality JSON as markdown
   6. write back: tags + notes + location=later
@@ -30,7 +30,6 @@ from readwise_tools.tag_document import tag_text
 # path no longer exists; `uv run --project <gone>` failed silently (ERR log line,
 # rate_tag still exit 0), so the nightly Readwise -> l-space.db feed had stopped.
 CONSUME_SELECTION_REPO = Path.home() / "Code" / "l-space-librarian"
-MAX_WORDS = 10000
 
 # Podcast-transcript deferral (2026-07-19). A Snipd->Reader podcast reaches
 # `location=new` as SHOW-NOTES ONLY and stays that way until Jelle presses
@@ -64,6 +63,20 @@ def _is_untranscribed_podcast(doc: dict, text: str) -> bool:
     if isinstance(wc, int) and wc >= PODCAST_WORD_FLOOR:
         return False
     return len(text or "") < PODCAST_CHAR_FLOOR
+
+
+def _needs_manual(wc, text: str, max_words: int) -> bool:
+    """PROCESS_MANUAL gate. Empty text is ALWAYS manual (nothing to rate).
+
+    The word ceiling is OPT-IN: `max_words <= 0` disables it (the 2026-07-20
+    default — a Max subscription rates long transcripts like a 20k-word podcast
+    fine, and the old 10000 ceiling was an API-era token guard). Pass
+    `--max-words 10000` to restore that guard if Hopswiki ever starts depleting
+    subscription tokens — the gate code stays; only the default changed.
+    """
+    if not (text or "").strip():
+        return True
+    return max_words > 0 and isinstance(wc, int) and wc > max_words
 
 
 def to_markdown(obj, indent: int = 0) -> str:
@@ -122,6 +135,7 @@ def main(
     location: str = "new",   # Reader location to drain
     level: str = "fast",     # inference level: fast|standard|smart
     model_slug: str = "claude-haiku",  # model component of the _rating tag
+    max_words: int = 0,      # PROCESS_MANUAL word ceiling; 0 = unlimited (opt-in token guard)
     quality_prompt: str = "estimate-quality",
     tags_prompt: str = "add-topic-tags",
     dry_run: bool = False,   # rate+tag but print planned PATCH instead of writing
@@ -163,8 +177,9 @@ def main(
                             "word_count": doc.get("word_count")})
             continue
 
-        # Gate: too long or no text -> PROCESS_MANUAL, leave the LLM untouched.
-        if (isinstance(wc, int) and wc > MAX_WORDS) or not text.strip():
+        # Gate: no text (always) or, when --max-words is set, too long ->
+        # PROCESS_MANUAL, leave the LLM untouched.
+        if _needs_manual(wc, text, max_words):
             manual += 1
             results.append({"id": doc_id, "action": "PROCESS_MANUAL", "word_count": wc})
             if not dry_run:
