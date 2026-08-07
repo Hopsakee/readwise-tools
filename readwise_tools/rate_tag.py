@@ -169,12 +169,23 @@ def main(
 
     processed = manual = skipped = errors = deferred = 0
     results = []
-    for doc in docs:
+    total = len(docs)
+    # Progress goes to stderr, one line per doc, printed BEFORE the slow step (the
+    # 2 sequential LLM calls via a nested `claude` subprocess) rather than after.
+    # `emit()` only prints the final JSON summary once, at the end — on a full
+    # --limit batch that's 15 items x 2 calls each with zero feedback in between,
+    # which reads as a hang in an interactive terminal (found 2026-08-07: Jelle
+    # ran it by hand and couldn't tell it was still working). stderr keeps stdout
+    # clean JSON for anything parsing it (the nightly wrapper captures both via
+    # `2>&1` already, so this is additive there, never breaking).
+    for i, doc in enumerate(docs, start=1):
         doc_id = doc.get("id")
+        title = (doc.get("title") or "")[:60]
         if not doc_id:
             continue
         if _already_rated(doc):
             skipped += 1
+            print(f"[{i}/{total}] skip (already rated): {title}", file=sys.stderr, flush=True)
             continue
         wc = doc.get("word_count") or 0
         text = html_to_text(doc.get("html_content", "")) or (doc.get("summary") or "")
@@ -184,6 +195,7 @@ def main(
         # has transcribed it; Pass B drains it to Library independently.
         if _is_untranscribed_podcast(doc, text):
             deferred += 1
+            print(f"[{i}/{total}] defer (untranscribed podcast): {title}", file=sys.stderr, flush=True)
             results.append({"id": doc_id, "action": "DEFER_PODCAST_PENDING_TRANSCRIPT",
                             "word_count": doc.get("word_count")})
             continue
@@ -192,11 +204,13 @@ def main(
         # PROCESS_MANUAL, leave the LLM untouched.
         if _needs_manual(wc, text, max_words):
             manual += 1
+            print(f"[{i}/{total}] PROCESS_MANUAL: {title}", file=sys.stderr, flush=True)
             results.append({"id": doc_id, "action": "PROCESS_MANUAL", "word_count": wc})
             if not dry_run:
                 client.update(doc_id, tags=["PROCESS_MANUAL"], location="later")
             continue
 
+        print(f"[{i}/{total}] rating + tagging (2 LLM calls): {title}", file=sys.stderr, flush=True)
         try:
             rated = rate_text(text, level=level, model_slug=model_slug, prompt_body=q_body)
             if "error" in rated:
