@@ -208,7 +208,7 @@ class _FakeReader:
         return {"ok": True}
 
 
-def _run_main(docs, max_words=0):
+def _run_main(docs, max_words=0, limit=15):
     """Run rate_tag.main over `docs` with client/LLM/prompt-load stubbed.
     Returns (summary, fake_client, llm_calls)."""
     fake = _FakeReader(docs)
@@ -217,7 +217,7 @@ def _run_main(docs, max_words=0):
     rt.load_prompt = lambda *a, **k: "PROMPT"
     rt.rate_text = lambda text, **k: (llm_calls.append(("rate", text)) or {"tier": "B", "quality": {"TIER": "B"}})
     rt.tag_text = lambda text, **k: (llm_calls.append(("tag", text)) or ["topic"])
-    return rt.main(limit=15, max_words=max_words, no_feed=True, no_pull=True), fake, llm_calls
+    return rt.main(limit=limit, max_words=max_words, no_feed=True, no_pull=True), fake, llm_calls
 
 
 _sn, _fk, _llm = _run_main([{"id": "p1", "category": "podcast", "word_count": None,
@@ -237,6 +237,29 @@ _ar, _fk3, _llm3 = _run_main([{"id": "a1", "category": "article", "word_count": 
                                "html_content": "<p>short article body here</p>", "summary": "", "tags": []}])
 check("ISC-12 short article rated normally (deferred==0, processed==1)",
       (_ar["deferred"], _ar["processed"]), (0, 1))
+
+# --- FIFO ordering (2026-08-07 fix: starved-podcast bug) --------------------
+# Reader's /list/ has no documented stable sort for location=new; a same-day
+# batch of newly-saved items could occupy the whole --limit budget every run
+# and starve older items indefinitely. main() must fetch the WHOLE location,
+# sort oldest-first by created_at, then take --limit — regardless of the order
+# the (fake) client happens to return docs in.
+_fifo_docs = [
+    {"id": "newest", "category": "article", "word_count": 50,
+     "html_content": "<p>n</p>", "summary": "", "tags": [], "created_at": "2026-08-06T10:00:00Z"},
+    {"id": "middle", "category": "article", "word_count": 50,
+     "html_content": "<p>m</p>", "summary": "", "tags": [], "created_at": "2026-08-03T10:00:00Z"},
+    {"id": "oldest", "category": "article", "word_count": 50,
+     "html_content": "<p>o</p>", "summary": "", "tags": [], "created_at": "2026-07-30T10:00:00Z"},
+]
+_fifo_sn, _fifo_fk, _ = _run_main(_fifo_docs, limit=2)
+check("FIFO: limit=2 over 3 docs processes exactly the two oldest",
+      sorted(u[0] for u in _fifo_fk.updates), ["middle", "oldest"])
+check("FIFO: the newest doc is left untouched this run (not starved out permanently)",
+      any(u[0] == "newest" for u in _fifo_fk.updates), False)
+check("FIFO: docs already in oldest-first order still process correctly",
+      sorted(u[0] for u in _run_main(list(reversed(_fifo_docs)), limit=2)[1].updates),
+      ["middle", "oldest"])
 
 # --- _needs_manual: opt-in word ceiling (2026-07-20) ------------------------
 # Empty text is ALWAYS manual (nothing to rate), regardless of max_words.

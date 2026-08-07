@@ -1,7 +1,7 @@
 """rwr-rate-tag — the nightly orchestrator (faithful n8n "Rate and tag sources").
 
 Pipeline, per the dead n8n workflow:
-  1. fetch location=new items (with html), capped by --limit
+  1. fetch ALL location=new items (with html), sort oldest-first (FIFO), take --limit
   2. skip items already carrying a _rating/ tag (idempotency beyond new->later)
   3. empty text (or word_count > --max-words, when set)  -> tag PROCESS_MANUAL, move to later, skip LLM
   4. otherwise: html->text, rate (quality tier) + tag (topic tags)
@@ -150,7 +150,18 @@ def main(
         emit({"error": "refusing unbounded run", "hint": "pass --limit >= 1 (scheduled run uses 10)"})
         sys.exit(2)
     client = ReaderClient()
-    docs = client.fetch(location=location, with_html=True, limit=limit or None)
+    # Fetch the WHOLE location rather than capping at the API level, then sort
+    # oldest-first ourselves. Reader's /list/ has no documented, stable sort
+    # guarantee for location=new; empirically it isn't FIFO by save time, so a
+    # same-day batch of newly-saved items can occupy the whole --limit budget
+    # every run and starve older ones indefinitely. Found 2026-08-07: 5 podcasts
+    # that had just crossed the transcript threshold sat unrated for over a week
+    # because fresher saves kept ranking ahead of them run after run. Fetching
+    # the full location is fine at the backlog sizes this pipeline expects
+    # (drained nightly, typically dozens of items, not thousands).
+    all_docs = client.fetch(location=location, with_html=True)
+    all_docs.sort(key=lambda d: d.get("created_at") or d.get("saved_at") or "")
+    docs = all_docs[:limit] if limit else all_docs
 
     # Load each prompt ONCE (pull the repo once), reuse the body per item.
     q_body = load_prompt(quality_prompt, pull=not no_pull)
