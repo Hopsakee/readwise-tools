@@ -93,8 +93,8 @@ rwr-update <id> --tags "python programming" --location later
 rwr-update <id> --notes "my note"          # only the flags you pass are sent
 ```
 
-Note: `--tags` **replaces** the document's tags (it does not merge). Flags use
-underscores (`--set_empty_notes`), matching the other tools.
+Note: `--tags` **replaces** the document's tags (it does not merge). Multi-word flags
+use hyphens (`--set-empty-notes`), matching the other tools (`call_parse` in fastcore >= 2.2).
 
 ### `rwr-save` — save a URL to Reader
 
@@ -133,7 +133,7 @@ filter to apply. `source_url` is the Snipd share link for Snipd-sourced podcasts
 
 ```bash
 rw-prompt estimate-quality            # git pull, then print prompts-latest/estimate-quality.md (frontmatter stripped)
-rw-prompt add-topic-tags --no_pull    # read the cached copy, no pull
+rw-prompt add-topic-tags --no-pull    # read the cached copy, no pull
 ```
 
 Doesn't hit either Readwise API — reads the locally-cloned `promptslibrarysync` repo.
@@ -149,7 +149,7 @@ prompts come from the locally-cloned `promptslibrarysync` repo.
 
 ```bash
 rwr-rate --id <doc>                    # fetch + rate a Reader doc
-cat article.md | rwr-rate --text_file -
+cat article.md | rwr-rate --text-file -
 ```
 Output: `{tier, model, quality}`. Uses the `estimate-quality` prompt.
 
@@ -163,7 +163,7 @@ Output: a JSON array of tags.
 ### `rwr-rate-tag` — the nightly orchestrator
 
 ```bash
-rwr-rate-tag --dry_run --limit 2       # rate+tag, print the planned PATCH, write nothing
+rwr-rate-tag --dry-run --limit 2       # rate+tag, print the planned PATCH, write nothing
 rwr-rate-tag --limit 10                # the scheduled behavior
 ```
 
