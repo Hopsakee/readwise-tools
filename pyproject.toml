@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "requests>=2.32",
-    "fastcore>=1.7",
+    "fastcore>=2.2",
 ]
 
 [project.scripts]
